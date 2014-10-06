@@ -1,0 +1,82 @@
+---
+# This playbook creates a Splunk 6.1 clustered deployment.
+
+# Apply common configuration to all hosts (security and core services)
+- hosts: tag_app_splunk
+  remote_user: ec2-user
+  sudo: true
+
+  roles:
+  - common
+
+# Install and configure base Splunk components
+- hosts: tag_app_splunk
+  remote_user: ec2-user
+  sudo: true
+
+  vars_files:
+  - '../.splunk-secrets.yml'
+
+  roles:
+  - splunk-base
+
+# Configure the License Master
+- hosts: tag_Name_Splunk*License*Master
+  remote_user: ec2-user
+  sudo: true
+
+  vars_files:
+  - '../.splunk-secrets.yml'
+
+  roles:
+  - license-master
+
+# Install and configure Cluster Master
+- hosts: tag_Name_Splunk*Cluster*Master
+  remote_user: ec2-user
+  sudo: true
+
+  vars_files:
+  - '../.splunk-secrets.yml'
+
+  roles:
+  - cluster-master
+
+# Install and configure Peer Nodes
+- hosts: tag_Name_Splunk*Peer*Node
+  remote_user: ec2-user
+  sudo: true
+
+  vars_files:
+  - '../.splunk-secrets.yml'
+
+  roles:
+  - peer-nodes
+
+# Install and configure Search Heads
+- hosts: tag_Name_*Search*Head
+  remote_user: ec2-user
+  sudo: true
+
+  vars_files:
+  - '../.splunk-secrets.yml'
+
+  roles:
+  - search-heads
+
+
+# Install and configure Deployment Server
+#- hosts: tag_Name_Deployment*
+#  remote_user: ec2-user
+#  sudo: true
+#  roles:
+#  - splunk-base
+#  - deployment-server
+
+# Install and configure License Master
+- hosts: tag_Name_License*
+  remote_user: ec2-user
+  sudo: true
+  roles:
+  - splunk-base
+  - license-master

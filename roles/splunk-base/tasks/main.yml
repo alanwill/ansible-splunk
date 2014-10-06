@@ -1,0 +1,150 @@
+---
+# This role contains plays to install and configure the base splunk instance
+
+- set_fact: new_password={{ new_pass }}
+- set_fact: current_password={{ current_pass }}
+- set_fact: ldap_password={{ ldap_pass }}
+
+- name: Update hostname in /etc/sysconfig/network
+  shell: sed -i "/HOSTNAME=localhost.localdomain/ c\\HOSTNAME=`curl http://169.254.169.254/latest/meta-data/instance-id`.{{ splunk_host_domain }}" /etc/sysconfig/network
+
+- name: Dynamically change hostname
+  shell: "hostname `curl http://169.254.169.254/latest/meta-data/instance-id`.{{ splunk_host_domain }}"
+
+- name: Install the GPG key for Splunk
+  rpm_key: state=present key={{ splunk_pgp_public_key }}
+
+- name: Check if Splunk is already installed
+  yum: name=splunk state=present
+  register: splunk_installed_result
+  ignore_errors: True
+
+- name: Check if Splunk is running
+  shell: /opt/splunk/bin/splunk status
+  register: splunk_running
+  ignore_errors: True
+
+- name: Download Splunk server binary
+  get_url: dest=/home/ec2-user  url={{ splunk_binary_url }} sha256sum={{ splunk_binary_sha256sum }}
+  when: splunk_installed_result|failed
+
+- name: Check that Splunk installer binary exists
+  stat: path=/home/ec2-user/{{ splunk_binary_file }}
+  register: splunk_installer_present
+
+- name: Install Splunk server binary
+  yum: pkg=/home/ec2-user/{{ splunk_binary_file }} state=installed
+  when: splunk_installer_present.stat.exists == true
+
+- name: Clean up RPM file
+  shell: rm -rf /home/ec2-user/{{ splunk_binary_file }}
+  when: splunk_installer_present.stat.exists == true
+
+- name: Copy scripts to run
+  copy: src="{{ item }}" dest="/home/ec2-user/{{ item }}" mode=755
+  with_items:
+   - config_splunk_inputs.sh
+  when: splunk_running|failed
+
+- name: Execute config_splunk_inputs.sh script
+  shell: /home/ec2-user/config_splunk_inputs.sh
+  when: splunk_running|failed
+
+- name: Clean up shell file
+  command: rm -rf /home/ec2-user/config_splunk_inputs.sh
+
+- name: Start Splunk for the first time
+  command: /bin/su --shell=/bin/bash --session-command="/opt/splunk/bin/splunk start --accept-license" splunk
+  when: splunk_running|failed
+
+- name: Enable Splunk to auto-start on boot
+  command: /bin/su --shell=/bin/bash --session-command="/opt/splunk/bin/splunk enable boot-start -user splunk"
+  when: splunk_running|failed
+
+- name: Set appropriate file ACLs for /var/log
+  command: /usr/bin/setfacl -m "u:splunk:r-x" /var/log
+  command: /usr/bin/setfacl -m "u:splunk:r--" /var/log/*
+  command: /usr/bin/setfacl -m d:user:splunk:r /var/log
+
+- name: Reset Splunk password
+  command: runuser -l splunk -c "/opt/splunk/bin/splunk edit user admin -password '{{ new_password }}' -role admin -auth admin:{{ current_password }}"
+  ignore_errors: True
+
+- name: Copy Splunk conf files
+  copy: src="{{ item }}" dest="/opt/splunk/etc/system/local/{{ item }}" mode=600 owner=splunk group=splunk
+  with_items:
+   - authentication.conf
+   - web.conf
+   - authorize.conf
+   - ui-prefs.conf
+   - alert_actions.conf
+
+- name: Creates cert directory
+  file: path=/opt/splunk/etc/auth/{{ company }} state=directory owner=splunk group=splunk mode=744 
+
+- name: Copy splunkweb cert and key
+  copy: src="{{ item }}" dest="/opt/splunk/etc/auth/{{ company }}/{{ item }}" mode=400 owner=splunk group=splunk
+  with_items:
+   - SplunkWebCert.pem
+   - SplunkWebPrivateKey.key
+
+- name: Decrypt splunkweb cert 
+  command: openssl aes-256-cbc -salt -a -d -in /opt/splunk/etc/auth/{{ company }}/{{ item }}
+           -out /opt/splunk/etc/auth/{{ company }}/decrypted.pem -k {{ cert_decryption_password }}
+           creates=/opt/splunk/etc/auth/{{ company }}/decrypted.pem
+  with_items:
+   - SplunkWebCert.pem
+
+- name: Decrypt splunkweb key
+  command: openssl aes-256-cbc -salt -a -d -in /opt/splunk/etc/auth/{{ company }}/{{ item }}
+           -out /opt/splunk/etc/auth/{{ company }}/decrypted.key -k {{ cert_decryption_password }}
+           creates=/opt/splunk/etc/auth/{{ company }}/decrypted.key
+  with_items:
+   - SplunkWebPrivateKey.key
+
+- name: Rename the decrypted cert 
+  command: mv /opt/splunk/etc/auth/{{ company }}/decrypted.pem /opt/splunk/etc/auth/{{ company }}/{{ item }} 
+           removes=/opt/splunk/etc/auth/{{ company }}/decrypted.pem
+  with_items:
+   - SplunkWebCert.pem
+
+- name: Rename the decrypted key
+  command: mv /opt/splunk/etc/auth/{{ company }}/decrypted.key /opt/splunk/etc/auth/{{ company }}/{{ item }}
+           removes=/opt/splunk/etc/auth/{{ company }}/decrypted.key
+  with_items:
+   - SplunkWebPrivateKey.key
+
+- name: Set configuration file permissions
+  file: path=/opt/splunk/etc/system/local/authentication.conf state=file owner=splunk group=splunk mode=0600
+  file: path=/opt/splunk/etc/system/local/web.conf state=file owner=splunk group=splunk mode=0600
+  file: path=/opt/splunk/etc/system/local/authorize.conf state=file owner=splunk group=splunk mode=0600
+  file: path=/opt/splunk/etc/system/local/ui-prefs.conf state=file owner=splunk group=splunk mode=0600
+  file: path=/opt/splunk/etc/system/local/alert_actions.conf state=file owner=splunk group=splunk mode=0600
+
+- name: Set certificate file permissions
+  file: path=/opt/splunk/etc/auth/{{ company }}/SplunkWebCert.pem state=file owner=splunk group=splunk mode=0400
+
+- name: Set key file permissions
+  file: path=/opt/splunk/etc/auth/{{ company }}/SplunkWebPrivateKey.key state=file owner=splunk group=splunk mode=0400
+
+- name: Update LDAP password
+  shell: sed -i 's/^bindDNpassword.*/bindDNpassword = {{ ldap_password }}/' /opt/splunk/etc/system/local/authentication.conf
+
+- name: Add nodes to license master
+  command: runuser -l splunk -c "splunk edit licenser-localslave -master_uri 'https://{{ splunk_license_master }}:8089' -auth admin:{{ new_pass }}"
+  ignore_errors: True
+
+- name: Restart Splunk
+  command: runuser -l splunk -c "splunk restart"
+  when: splunk_running|failed
+
+- name: Install packages for git, Splunk CPU usage reporting and Cloudwatch monitoring 
+  yum: name={{ item }} state=present
+  with_items:
+   - git
+   - sysstat
+   - yum-cron
+   - perl-Switch
+   - perl-Sys-Syslog
+   - perl-LWP-Protocol-https
+

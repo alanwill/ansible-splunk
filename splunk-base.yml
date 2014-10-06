@@ -1,0 +1,19 @@
+---
+# Apply common configuration to all hosts (security and core services)
+ - hosts: tag_app_splunk
+   remote_user: ec2-user
+   sudo: true
+
+   roles:
+   - common
+
+# Install and configure base Splunk components
+ - hosts: tag_app_splunk
+   remote_user: ec2-user
+   sudo: true
+
+   vars_files:
+   - '../.splunk-secrets.yml'
+
+   roles:
+   - splunk-base

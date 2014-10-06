@@ -1,0 +1,3 @@
+---
+# S3 bucket name containing Splunk licenses and configs
+splunk-config-bucket:

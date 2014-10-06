@@ -1,0 +1,67 @@
+---
+# This role contains plays to install and configure the Peer Nodes
+
+- name: Check if clustering is enabled
+  command: runuser -l splunk -c "/opt/splunk/bin/splunk list cluster-peers -auth admin:{{ new_pass }}"
+  register: peer_nodes_clustering_enabled
+  ignore_errors: True
+
+- name: Enable Peer Nodes
+  command: runuser -l splunk -c "splunk edit cluster-config -mode slave -master_uri https://{{ splunk_cluster_master_ip }}:8089 -replication_port 9887 -secret {{ replication_key }}"
+  when: peer_nodes_clustering_enabled|failed
+  register: peer_nodes_cluster_configure
+
+- name: Check if Splunk data volume exists
+  mount: name=/opt/splunk/data src=/dev/md127 fstype=ext4 state=mounted
+  register: splunk_volume_exists
+  ignore_errors: True
+
+- name: Gather EC2 facts
+  action: ec2_facts
+
+#- name: Prewarm EBS volume1
+#  command: dd if=/dev/zero of=/dev/sdf bs=1M
+#  when: splunk_volume_exists|failed
+#  ignore_errors: True
+
+#- name: Prewarm EBS volume2
+#  command: dd if=/dev/zero of=/dev/sdg bs=1M
+#  when: splunk_volume_exists|failed
+#  ignore_errors: True
+
+- name: Partition 90% of disk0 for use
+  shell: (echo n; echo p; echo 1; echo 2048; echo +720G; echo w) | fdisk /dev/xvdb 
+  when: splunk_volume_exists|failed
+
+- name: Partition 90% of disk1 for use
+  shell: (echo n; echo p; echo 1; echo 2048; echo +720G; echo w) | fdisk /dev/xvdc
+  when: splunk_volume_exists|failed
+
+- name: Create RAID 0 device
+  command: mdadm --create --verbose /dev/md127 --level=stripe --raid-devices=2 /dev/xvdb1 /dev/xvdc1
+  when: splunk_volume_exists|failed
+
+- name: Create filesystem
+  filesystem: fstype=ext4 dev=/dev/md127
+  when: splunk_volume_exists|failed
+
+- name: Create data directory
+  command: runuser -l splunk -c "mkdir -p /opt/splunk/data"
+  when: splunk_volume_exists|failed
+
+- name: Mount volume
+  mount: name=/opt/splunk/data src=/dev/md127 fstype=ext4 state=mounted
+  when: splunk_volume_exists|failed
+
+- name: Set default data store
+  command: runuser -l splunk -c "splunk set datastore-dir /opt/splunk/data -auth admin:{{ new_pass }}"
+
+- name: Change permissions of data mount point
+  command: chown -R splunk.splunk /opt/splunk/data
+
+- name: Disable splunkweb
+  command: runuser -l splunk -c "splunk disable webserver -auth admin:{{ new_pass }}"
+
+- name: Restart Peer Nodes
+  command: runuser -l splunk -c "splunk restart"
+  when: peer_nodes_cluster_configure|success

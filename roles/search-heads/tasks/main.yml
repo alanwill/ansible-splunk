@@ -1,0 +1,20 @@
+---
+# This role contains plays to install and configure the Search Heads
+
+- name: Check if clustering is enabled
+  command: runuser -l splunk -c "/opt/splunk/bin/splunk list cluster-peers -auth admin:{{ new_pass }}"
+  register: search_head_clustering_enabled
+  ignore_errors: True
+
+- name: Enable Search Heads
+  command: runuser -l splunk -c "/opt/splunk/bin/splunk edit cluster-config -mode searchhead -master_uri https://{{ splunk_cluster_master_ip }}:8089 -secret {{ replication_key }}"
+  when: search_head_clustering_enabled|failed
+  register: search_head_cluster_configure
+
+- name: Restart Search Heads
+  command: runuser -l splunk -c "splunk restart"
+
+- name: Install nfs-utils 
+  yum: name={{ item }} state=present
+  with_items:
+   - nfs-utils

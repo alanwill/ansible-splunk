@@ -1,0 +1,16 @@
+---
+# This role contains plays to install and configure the Cluster Master
+
+- name: Check if clustering is enabled
+  command: runuser -l splunk -c "/opt/splunk/bin/splunk list cluster-peers -auth admin:{{ new_pass }}"
+  register: cluster_master_clustering_enabled
+  ignore_errors: True
+
+- name: Enable Cluster Master
+  command: runuser -l splunk -c "splunk edit cluster-config -mode master -replication_factor 3 -search_factor 2 -secret {{ replication_key }}"
+  when: cluster_master_clustering_enabled|failed
+  register: cluster_master_configure
+
+- name: Restart Cluster Master
+  command: runuser -l splunk -c "splunk restart"
+  when: cluster_master_clustering_enabled|failed

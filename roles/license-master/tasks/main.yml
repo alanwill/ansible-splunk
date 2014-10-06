@@ -1,0 +1,16 @@
+---
+# This role contains plays to configure the License Master
+
+- name: Create license folder
+  file: path=/opt/splunk/licenses state=directory owner=splunk group=splunk mode=744
+
+- name: Download license key from S3
+  s3: bucket={{ splunk-config-bucket }} object=/licenses/splunk.license dest=/opt/splunk/licenses/splunk.license mode=get
+
+- name: Install license key
+  command: runuser -l splunk -c "/opt/splunk/bin/splunk add licenses /opt/splunk/licenses/splunk.license"
+  ignore_errors: True
+
+- name: Restart Splunk
+  command: runuser -l splunk -c "splunk restart"
+

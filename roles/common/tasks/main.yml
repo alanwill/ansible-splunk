@@ -1,0 +1,5 @@
+---
+# This role contains common plays that will run on all nodes.
+
+- name: upgrade all packages
+  yum: name=* state=latest
