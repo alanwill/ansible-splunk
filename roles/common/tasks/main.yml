@@ -1,5 +1,8 @@
 ---
 # This role contains common plays that will run on all nodes.
 
-- name: upgrade all packages
+- name: Upgrade all packages
   yum: name=* state=latest
+
+- name: Create security update cron job
+  action: cron name="yum security update" weekday=* minute=5 hour=23 user="root" job="/usr/bin/yum --security -y update" state=present
